@@ -24,7 +24,7 @@ typedef union {
 void initList(Orb *olist, int nUnit, int style);
 void calcOne(Orb*o, int oId, Orb*olist, int nUnit);
 void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz);
-void printList(double *list, int len, int rank, const char* s);
+void printList(Orb *list, int len, int rank, const char* s);
 void saveList(Orb *olist, int len, const char* filepath);
 void loadList(double **list, int *len, const char* filepath);
 
@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
     int nUnitPerWorker = nUnit / nWorkers;//nUnit:list有多少个unit。list字节长度=sizeof(double)*unitSize
     int listSizeOfByte = sizeof(double) * unitSize * nUnit;
     int chunkSize = unitSize*nUnitPerWorker;
-    double* list = (double*)malloc(listSizeOfByte);
+    Orb* list = (Orb*)malloc(listSizeOfByte);
     long calcTimes = (long)(nUnit * nUnit) * (long)nTimes;
     printf("list addr=%p nUnit=%d nUnitPerWorker=%d chunkSize=%d listbytes=%d\n", list, nUnit, nUnitPerWorker, chunkSize, listSizeOfByte);
 
@@ -77,27 +77,30 @@ int main(int argc, char *argv[])
     // 广播必须每个rank都调用，否则报 Fatal error in PMPI_Barrier: Message truncated, error stack
     MPI_Bcast(list, nUnit*unitSize, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
-    printList(list, nUnit*unitSize, rank, "after init bcast");
+    printList(list, nUnit, rank, "after init bcast");
     double startTime = MPI_Wtime(), endTime;
 
     int i = 0, j = 0, k = 0;
     for (j=0; j<nTimes; ++j) {
         // calculate list here
-        //list[rank*chunkSize] = (double)rank*100+(double)j;
+        //list[rank*nUnitPerWorker].x = (double)rank*100+(double)j;
+
         for (k=0; k<nUnitPerWorker; ++k) {
-            Orb* o = (Orb*)(list+rank*nUnitPerWorker*unitSize+k);
+            Orb* o = list+rank*nUnitPerWorker+k;
             int oId = rank*nUnitPerWorker+k;
             calcOne(o, oId, (Orb*)list, nUnit);
         }
 
         MPI_Barrier(MPI_COMM_WORLD);
+        printf("list=%p list+i*chunkSize=%p chunkSize=%d\n", list, list+chunkSize, chunkSize);
         // bcast 对于发送方来说等于send，对于接受方来说等于recv，调用时需要for i in nWorkers来依次bcast。相当于调用nWorkers*nWorkers次。
         // 不加for循环，root设置为自己，相当于只有root.send,没有other.recv。
         for (i=0; i<nWorkers; ++i) MPI_Bcast(list+i*chunkSize, chunkSize, MPI_DOUBLE, i, MPI_COMM_WORLD);
     }
+    printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
     MPI_Barrier(MPI_COMM_WORLD);
-    printList(list, nUnit*unitSize, rank, "finally");
-    printf("list+i*chunkSize=%p\n", list+i*chunkSize);
+    printList(list, nUnit, rank, "finally");
+    printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
 
     endTime = MPI_Wtime();
     printf("all used time:%f calc times:%ld cps:%eg\n", endTime-startTime, calcTimes, (double)calcTimes/(endTime-startTime));
@@ -108,9 +111,9 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void printList(double *list, int len, int rank, const char* s) {
+void printList(Orb *list, int len, int rank, const char* s) {
     //char str[1000] = {};
-    int bufferlen = 100000;
+    int bufferlen = 1000000;
     static char* str = NULL;
     if (str == NULL) {
         str = (char*) malloc(bufferlen);//
@@ -119,15 +122,13 @@ void printList(double *list, int len, int rank, const char* s) {
     }
     int i = 0, pos = 0;
     for (i=0; i<len; i++) {
-        char stmp[16] = {};
-        sprintf(stmp, "%f,", list[i]);
-        if (((i+1)%unitSize) == 0) {
-            sprintf(stmp+strlen(stmp), "\n");
-        }
+        Orb* o = list + i;
+        char stmp[255] = {};
+        sprintf(stmp, "%f,%f,%f,%f,%f,%f,%f,%.2f\n", o->x,o->y,o->z,o->vx,o->vy,o->vz,o->m,o->st);
         memcpy((str+pos), stmp, strlen((const char*)stmp));
         pos += strlen(stmp);
         if (pos>=bufferlen) {
-            printf("str not enough! i=%d len=%d rank=%d\n", i, len, rank);
+            printf("str not enough! i=%d/len=%d rank=%d\n", i, len, rank);
             break;
         }
     }
@@ -151,6 +152,7 @@ void initList(Orb *olist, int nUnit, int style) {
         o->vy = (double)random()/(double)RAND_MAX*velo;
         o->vz = (double)random()/(double)RAND_MAX*velo;
         o->m  = (double)random()/(double)RAND_MAX*mass;
+        o->st = -(double)i;
     }
 }
 void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz) {
@@ -164,18 +166,18 @@ void calcOne(Orb*o, int oId, Orb*olist, int nUnit) {
     //Orb* mest = (Orb*)*o;
     if (o->st == 0) {
         int i = 0;
-        double g, gx, gy, gz, gax, gay, gaz, dist = 0;
-        g = gx = gy = gz = gax = gay = gaz = 0;
+        double gx, gy, gz, gax, gay, gaz, dist = 0;
+        gx = gy = gz = gax = gay = gaz = 0;
         for (i=0; i<nUnit; ++i) {
-            Orb* ta = (Orb*)(olist+i);
-            if (oId == i || ta->st == 1) {
+            Orb* ta = olist+i;
+            if (oId == i || ta->st > 0) {
                 continue;
             }
             dist = sqrt((double)((ta->x-o->x)*(ta->x-o->x)+(ta->y-o->y)*(ta->y-o->y)+(ta->x-o->z)*(ta->z-o->z)));
             int isTooRappid = dist*dist<(o->vx*o->vx+o->vy*o->vy+o->vz*o->vz)*10;
             if (dist<MIN_DIST || isTooRappid) {
                 // crash
-                o->st = 1;
+                o->st = -o->st;
                 printf("one crash: oid=%d, tid=%d dist=%f isTooRappid=%d\n", oId, i, dist, isTooRappid);
                 continue;
             }

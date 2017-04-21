@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
     int listSizeOfByte = sizeof(double) * unitSize * nUnit;
     int chunkSize = unitSize*nUnitPerWorker;
     Orb* list = (Orb*)malloc(listSizeOfByte);
-    long calcTimes = (long)(nUnit * nUnit) * (long)nTimes;
+    long calcTimes = (long)(nUnit) * (long)(nUnit) * (long)nTimes;
     printf("list addr=%p nUnit=%d nUnitPerWorker=%d chunkSize=%d listbytes=%d\n", list, nUnit, nUnitPerWorker, chunkSize, listSizeOfByte);
 
     // init list here
@@ -78,12 +78,13 @@ int main(int argc, char *argv[])
     MPI_Bcast(list, nUnit*unitSize, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
     printList(list, nUnit, rank, "after init bcast");
-    double startTime = MPI_Wtime(), endTime;
+    double startTime = MPI_Wtime(), endTime, usedTime;
 
     int i = 0, j = 0, k = 0;
     for (j=0; j<nTimes; ++j) {
         // calculate list here
         //list[rank*nUnitPerWorker].x = (double)rank*100+(double)j;
+        //list[rank*nUnitPerWorker].y += rank;//(double)rank*100+(double)j;
 
         for (k=0; k<nUnitPerWorker; ++k) {
             Orb* o = list+rank*nUnitPerWorker+k;
@@ -95,7 +96,7 @@ int main(int argc, char *argv[])
         printf("list=%p list+i*chunkSize=%p chunkSize=%d\n", list, list+chunkSize, chunkSize);
         // bcast 对于发送方来说等于send，对于接受方来说等于recv，调用时需要for i in nWorkers来依次bcast。相当于调用nWorkers*nWorkers次。
         // 不加for循环，root设置为自己，相当于只有root.send,没有other.recv。
-        for (i=0; i<nWorkers; ++i) MPI_Bcast(list+i*chunkSize, chunkSize, MPI_DOUBLE, i, MPI_COMM_WORLD);
+        for (i=0; i<nWorkers; ++i) MPI_Bcast(((double*)list)+i*chunkSize, chunkSize, MPI_DOUBLE, i, MPI_COMM_WORLD);
     }
     printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
     MPI_Barrier(MPI_COMM_WORLD);
@@ -103,7 +104,8 @@ int main(int argc, char *argv[])
     printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
 
     endTime = MPI_Wtime();
-    printf("all used time:%f calc times:%ld cps:%eg\n", endTime-startTime, calcTimes, (double)calcTimes/(endTime-startTime));
+    usedTime = endTime - startTime;
+    printf("all used time:%f calc times:%ld cps:%e bps=%e\n", usedTime, calcTimes, (double)calcTimes/(usedTime), (double)nTimes/(usedTime));
     saveList((Orb*)list, nUnit, "./thelist1");
     free(list);
     list = NULL;
@@ -145,6 +147,7 @@ void initList(Orb *olist, int nUnit, int style) {
     for (i=0; i<nUnit; ++i) {
         //Orb* o = (Orb*)(list+i*unitSize);
         Orb* o = olist+i;
+
         o->x  = (double)random()/(double)RAND_MAX*wide;
         o->y  = (double)random()/(double)RAND_MAX*wide;
         o->z  = (double)random()/(double)RAND_MAX*wide;

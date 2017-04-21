@@ -148,12 +148,12 @@ void initList(Orb *olist, int nUnit, int style) {
         //Orb* o = (Orb*)(list+i*unitSize);
         Orb* o = olist+i;
 
-        o->x  = (double)random()/(double)RAND_MAX*wide;
-        o->y  = (double)random()/(double)RAND_MAX*wide;
-        o->z  = (double)random()/(double)RAND_MAX*wide;
-        o->vx = (double)random()/(double)RAND_MAX*velo;
-        o->vy = (double)random()/(double)RAND_MAX*velo;
-        o->vz = (double)random()/(double)RAND_MAX*velo;
+        o->x  = (double)random()/(double)RAND_MAX*wide - wide/2.0;
+        o->y  = (double)random()/(double)RAND_MAX*wide - wide/2.0;
+        o->z  = (double)random()/(double)RAND_MAX*wide - wide/2.0;
+        o->vx = (double)random()/(double)RAND_MAX*velo - velo/2.0;
+        o->vy = (double)random()/(double)RAND_MAX*velo - velo/2.0;
+        o->vz = (double)random()/(double)RAND_MAX*velo - velo/2.0;
         o->m  = (double)random()/(double)RAND_MAX*mass;
         o->st = -(double)i;
     }
@@ -168,26 +168,25 @@ void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz) {
 void calcOne(Orb*o, int oId, Orb*olist, int nUnit) {
     //Orb* mest = (Orb*)*o;
     if (o->st == 0) {
-        int i = 0;
+        int i = 0, isTooRappid = 0;
         double gx, gy, gz, gax, gay, gaz, dist = 0;
         gx = gy = gz = gax = gay = gaz = 0;
         for (i=0; i<nUnit; ++i) {
             Orb* ta = olist+i;
-            if (oId == i || ta->st > 0) {
-                continue;
+            if (oId != i && o->st < 0 && ta->st < 0) {
+                dist = sqrt((double)((ta->x-o->x)*(ta->x-o->x)+(ta->y-o->y)*(ta->y-o->y)+(ta->x-o->z)*(ta->z-o->z)));
+                isTooRappid = dist*dist<(o->vx*o->vx+o->vy*o->vy+o->vz*o->vz)*10;
+                if (dist<MIN_DIST || isTooRappid) {
+                    // crash
+                    o->st = -o->st;
+                    printf("one crash: oid=%d, tid=%d dist=%f isTooRappid=%d\n", oId, i, dist, isTooRappid);
+                    continue;
+                }
+                calcGravity(o, ta, dist, &gx, &gy, &gz);
+                gax += gx;
+                gay += gy;
+                gaz += gz;
             }
-            dist = sqrt((double)((ta->x-o->x)*(ta->x-o->x)+(ta->y-o->y)*(ta->y-o->y)+(ta->x-o->z)*(ta->z-o->z)));
-            int isTooRappid = dist*dist<(o->vx*o->vx+o->vy*o->vy+o->vz*o->vz)*10;
-            if (dist<MIN_DIST || isTooRappid) {
-                // crash
-                o->st = -o->st;
-                printf("one crash: oid=%d, tid=%d dist=%f isTooRappid=%d\n", oId, i, dist, isTooRappid);
-                continue;
-            }
-            calcGravity(o, ta, dist, &gx, &gy, &gz);
-            gax += gx;
-            gay += gy;
-            gaz += gz;
         }
 //        gax = gax/nUnit;
 //        gay = gay/nUnit;

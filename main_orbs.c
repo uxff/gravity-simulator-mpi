@@ -6,12 +6,13 @@
 #include <string.h>
 #include <unistd.h>
 
-#define G 0.00005
+#define G 0.000005
 #define MIN_DIST 1.0
 const int unitSize = 8;//unitSize:每个计算单位的大小，多少个float
 double wide = 1000;
 double mass = 10;
 double velo = 0.005;
+int saveTimes = 0;
 
 typedef struct Orb {
   double x,y,z,vx,vy,vz,m,st;
@@ -57,7 +58,6 @@ int main(int argc, char *argv[])
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &nWorkers);
-    // 任务如何均匀下发？
     int nUnitPerWorker = nUnit / nWorkers;//nUnit:list有多少个unit。list字节长度=sizeof(double)*unitSize
     int listSizeOfByte = sizeof(double) * unitSize * nUnit;
     int chunkSize = unitSize*nUnitPerWorker;
@@ -79,37 +79,34 @@ int main(int argc, char *argv[])
 
     int i = 0, j = 0, k = 0;
     for (j=0; j<nTimes; ++j) {
-        // calculate list here
-        //list[rank*nUnitPerWorker].x = (double)rank*100+(double)j;
         //list[rank*nUnitPerWorker].y += rank;//(double)rank*100+(double)j;
 
         for (k=0; k<nUnitPerWorker; ++k) {
-            Orb* o = list+rank*nUnitPerWorker+k;
-            //printList(o, 1, rank, "now calc this:");
             int oId = rank*nUnitPerWorker+k;
+            Orb* o = list+oId;
+            //printList(o, 1, rank, "now calc this:");
             calcOne(o, oId, list, nUnit);
         }
-
-        MPI_Barrier(MPI_COMM_WORLD);
         //printf("list=%p list+i*chunkSize=%p chunkSize=%d\n", list, list+chunkSize, chunkSize);
+/*
         if ((j+1) %10000 == 0) {
-            sleep(1);
-        if (rank == 0) {
-            saveList(list, nUnit, "./thelist1");
+            //usleep(100000);
+            if (rank == 0) {
+                saveList(list, nUnit, "./thelist1");
+            }
         }
-        }
+*/
         // bcast 对于发送方来说等于send，对于接受方来说等于recv，调用时需要for i in nWorkers来依次bcast。相当于调用nWorkers*nWorkers次。
         // 不加for循环，root设置为自己，相当于只有root.send,没有other.recv。
         for (i=0; i<nWorkers; ++i) MPI_Bcast(((double*)list)+i*chunkSize, chunkSize, MPI_DOUBLE, i, MPI_COMM_WORLD);
+        //MPI_Barrier(MPI_COMM_WORLD);
     }
-    //printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
     MPI_Barrier(MPI_COMM_WORLD);
     //printList(list, nUnit, rank, "finally");
-    //printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
 
     endTime = MPI_Wtime();
     usedTime = endTime - startTime;
-    printf("all used time:%f calc times:%ld cps:%e bps=%e\n", usedTime, calcTimes, (double)calcTimes/(usedTime), (double)nTimes/(usedTime));
+    printf("all time:%f calc times:%ld cps:%g bps=%g sps=%g save times:%d\n", usedTime, calcTimes, (double)calcTimes/(usedTime), (double)nTimes/(usedTime), (double)saveTimes/usedTime, saveTimes);
     saveList(list, nUnit, "./thelist1");
     free(list);
     list = NULL;
@@ -145,6 +142,7 @@ void saveList(Orb *olist, int len, const char* filepath) {
         printf("cannot save to file:%s", filepath);
         return;
     }
+    ++saveTimes;
     fprintf(f, "[");
     int i = 0;
     for (i=0; i<len; i++) {
@@ -165,7 +163,6 @@ void initList(Orb *olist, int nUnit, int style) {
     for (i=0; i<nUnit; ++i) {
         //Orb* o = (Orb*)(list+i*unitSize);
         Orb* o = olist+i;
-
         o->x  = (double)random()/(double)RAND_MAX*wide - wide/2.0;
         o->y  = (double)random()/(double)RAND_MAX*wide - wide/2.0;
         o->z  = (double)random()/(double)RAND_MAX*wide - wide/2.0;
@@ -178,42 +175,38 @@ void initList(Orb *olist, int nUnit, int style) {
 }
 void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz) {
     double a = ta->m / (dist*dist) * G;
-    *gx = - a * (o->x - ta->x) / dist;
-    *gy = - a * (o->y - ta->y) / dist;
-    *gz = - a * (o->z - ta->z) / dist;
+    *gx += - a * (o->x - ta->x) / dist;
+    *gy += - a * (o->y - ta->y) / dist;
+    *gz += - a * (o->z - ta->z) / dist;
 }
 /* Orb update once with list */
 void calcOne(Orb*o, int oId, Orb*olist, int nUnit) {
-    //Orb* mest = (Orb*)*o;
-    if (o->st < 0) {
+    //if (o->st < 0) {
         int i = 0, isTooRappid = 0;
-        double gx, gy, gz, gax, gay, gaz, dist = 0;
-        gx = gy = gz = gax = gay = gaz = 0;
+        double gax = 0, gay = 0, gaz = 0, dist = 0;
         for (i=0; i<nUnit; ++i) {
             Orb* ta = olist+i;
-            if (oId != i && o->st < 0 && ta->st < 0) {
+            if (o->st < 0 && ta->st < 0 && oId != i) {
                 dist = sqrt(((ta->x-o->x)*(ta->x-o->x)+(ta->y-o->y)*(ta->y-o->y)+(ta->z-o->z)*(ta->z-o->z)));
                 isTooRappid = dist*dist<(o->vx*o->vx+o->vy*o->vy+o->vz*o->vz)*10;
                 if (dist<MIN_DIST || isTooRappid) {
                     // crash
-                    o->st = -o->st;
-                    printf("one crash: oid=%d, tid=%d dist=%f isTooRappid=%d\n", oId, i, dist, isTooRappid);
+                    if (o->m < ta->m) {
+                        o->st = -o->st;
+                        printf("one crash: oid=%d, tid=%d dist=%f isTooRappid=%d\n", oId, i, dist, isTooRappid);
+                    }
                     continue;
                 }
-                calcGravity(o, ta, dist, &gx, &gy, &gz);
-                gax += gx;
-                gay += gy;
-                gaz += gz;
+                calcGravity(o, ta, dist, &gax, &gay, &gaz);
             }
         }
-//printf("oId=%d tid=%d gax=%lf gay=%lf gaz=%g dist=%lf\n", oId, i, gax, gay, gaz, dist);
         o->x += o->vx;
         o->y += o->vy;
         o->z += o->vz;
         o->vx += gax;
         o->vy += gay;
         o->vz += gaz;
-    }
+    //}
 }
 
 

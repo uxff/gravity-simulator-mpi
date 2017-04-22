@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#define G 0.0000005
+#define G 0.00005
 #define MIN_DIST 1.0
 const int unitSize = 8;//unitSize:每个计算单位的大小，多少个float
 double wide = 1000;
@@ -31,29 +31,24 @@ void loadList(double **list, int *len, const char* filepath);
 int main(int argc, char *argv[])
 {
     int rank, value=0, nWorkers;
-    int nUnit = 5, nTimes = 3;
+    long nUnit = 5, nTimes = 3;
     int ch;
     while ((ch = getopt(argc, argv, "l:m:v:w:t:")) != -1) {
         switch (ch) {
             case 'l':
                 nUnit = atoi(optarg);
-                printf("set nUnit=%d\n", nUnit);
                 break;
             case 'm':
                 mass = atof(optarg);
-                printf("set mass=%f\n", mass);
                 break;
             case 'v':
                 velo = atof(optarg);
-                printf("set velo=%f\n", velo);
                 break;
             case 'w':
                 wide = atof(optarg);
-                printf("set wide=%f\n", wide);
                 break;
             case 't':
                 nTimes = atoi(optarg);
-                printf("set times=%d\n", nTimes);
                 break;
             defualt:
                 break;
@@ -69,15 +64,17 @@ int main(int argc, char *argv[])
     Orb* list = (Orb*)malloc(listSizeOfByte);
     long calcTimes = (long)(nUnit) * (long)(nUnit) * (long)nTimes;
     printf("list addr=%p nUnit=%d nUnitPerWorker=%d chunkSize=%d listbytes=%d\n", list, nUnit, nUnitPerWorker, chunkSize, listSizeOfByte);
+    printf("mass=%lf velo=%lf wide=%lf nTimes=%ld willTimes=%ld myUnits=[%ld,%ld]\n", mass, velo, wide, nTimes, calcTimes, rank*nUnitPerWorker, (rank+1)*nUnitPerWorker-1);
 
     // init list here
     if (rank == 0) {
         initList((Orb*)list, nUnit, 0);
+        saveList(list, nUnit, "./thelist1");
     }
     // 广播必须每个rank都调用，否则报 Fatal error in PMPI_Barrier: Message truncated, error stack
     MPI_Bcast(list, nUnit*unitSize, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Barrier(MPI_COMM_WORLD);
-    printList(list, nUnit, rank, "after init bcast");
+    //printList(list, nUnit, rank, "after init bcast");
     double startTime = MPI_Wtime(), endTime, usedTime;
 
     int i = 0, j = 0, k = 0;
@@ -88,25 +85,32 @@ int main(int argc, char *argv[])
 
         for (k=0; k<nUnitPerWorker; ++k) {
             Orb* o = list+rank*nUnitPerWorker+k;
+            //printList(o, 1, rank, "now calc this:");
             int oId = rank*nUnitPerWorker+k;
-            calcOne(o, oId, (Orb*)list, nUnit);
+            calcOne(o, oId, list, nUnit);
         }
 
         MPI_Barrier(MPI_COMM_WORLD);
-        printf("list=%p list+i*chunkSize=%p chunkSize=%d\n", list, list+chunkSize, chunkSize);
+        //printf("list=%p list+i*chunkSize=%p chunkSize=%d\n", list, list+chunkSize, chunkSize);
+        if ((j+1) %10000 == 0) {
+            sleep(1);
+        if (rank == 0) {
+            saveList(list, nUnit, "./thelist1");
+        }
+        }
         // bcast 对于发送方来说等于send，对于接受方来说等于recv，调用时需要for i in nWorkers来依次bcast。相当于调用nWorkers*nWorkers次。
         // 不加for循环，root设置为自己，相当于只有root.send,没有other.recv。
         for (i=0; i<nWorkers; ++i) MPI_Bcast(((double*)list)+i*chunkSize, chunkSize, MPI_DOUBLE, i, MPI_COMM_WORLD);
     }
-    printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
+    //printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
     MPI_Barrier(MPI_COMM_WORLD);
-    printList(list, nUnit, rank, "finally");
-    printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
+    //printList(list, nUnit, rank, "finally");
+    //printf("list=%p list+i*chunkSize=%p\n", list, list+i*chunkSize);
 
     endTime = MPI_Wtime();
     usedTime = endTime - startTime;
     printf("all used time:%f calc times:%ld cps:%e bps=%e\n", usedTime, calcTimes, (double)calcTimes/(usedTime), (double)nTimes/(usedTime));
-    saveList((Orb*)list, nUnit, "./thelist1");
+    saveList(list, nUnit, "./thelist1");
     free(list);
     list = NULL;
     MPI_Finalize();
@@ -114,7 +118,6 @@ int main(int argc, char *argv[])
 }
 
 void printList(Orb *list, int len, int rank, const char* s) {
-    //char str[1000] = {};
     int bufferlen = 1000000;
     static char* str = NULL;
     if (str == NULL) {
@@ -137,6 +140,21 @@ void printList(Orb *list, int len, int rank, const char* s) {
     printf("%s, rank=%d list={\n%s}\n", s, rank, str);
 }
 void saveList(Orb *olist, int len, const char* filepath) {
+    FILE * f = fopen(filepath, "w");
+    if (f == NULL) {
+        printf("cannot save to file:%s", filepath);
+        return;
+    }
+    fprintf(f, "[");
+    int i = 0;
+    for (i=0; i<len; i++) {
+        Orb* o = olist + i;
+        //char stmp[255] = {};
+        fprintf(f, "{\"x\":%g,\"y\":%g,\"z\":%g,\"vx\":%g,\"vy\":%g,\"vz\":%g,\"m\":%lf,\"st\":%d,\"id\":%d},", o->x,o->y,o->z,o->vx,o->vy,o->vz,o->m,(o->st<0?1:2),i);
+    }
+    fseek(f, -1, SEEK_CUR);
+    fprintf(f, "]");
+    fclose(f);
 }
 /**/
 void loadList(double **list, int *len, const char* filepath) {
@@ -167,14 +185,14 @@ void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz) {
 /* Orb update once with list */
 void calcOne(Orb*o, int oId, Orb*olist, int nUnit) {
     //Orb* mest = (Orb*)*o;
-    if (o->st == 0) {
+    if (o->st < 0) {
         int i = 0, isTooRappid = 0;
         double gx, gy, gz, gax, gay, gaz, dist = 0;
         gx = gy = gz = gax = gay = gaz = 0;
         for (i=0; i<nUnit; ++i) {
             Orb* ta = olist+i;
             if (oId != i && o->st < 0 && ta->st < 0) {
-                dist = sqrt((double)((ta->x-o->x)*(ta->x-o->x)+(ta->y-o->y)*(ta->y-o->y)+(ta->x-o->z)*(ta->z-o->z)));
+                dist = sqrt(((ta->x-o->x)*(ta->x-o->x)+(ta->y-o->y)*(ta->y-o->y)+(ta->z-o->z)*(ta->z-o->z)));
                 isTooRappid = dist*dist<(o->vx*o->vx+o->vy*o->vy+o->vz*o->vz)*10;
                 if (dist<MIN_DIST || isTooRappid) {
                     // crash
@@ -188,9 +206,7 @@ void calcOne(Orb*o, int oId, Orb*olist, int nUnit) {
                 gaz += gz;
             }
         }
-//        gax = gax/nUnit;
-//        gay = gay/nUnit;
-//        gaz = gaz/nUnit;
+//printf("oId=%d tid=%d gax=%lf gay=%lf gaz=%g dist=%lf\n", oId, i, gax, gay, gaz, dist);
         o->x += o->vx;
         o->y += o->vy;
         o->z += o->vz;

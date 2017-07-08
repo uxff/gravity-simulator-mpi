@@ -136,6 +136,7 @@ void printList(Orb *list, int len, int rank, const char* s) {
     }
     printf("%s, rank=%d list={\n%s}\n", s, rank, str);
 }
+/*模拟输出到json,似乎精度有损失*/
 void saveList(Orb *olist, int len, const char* filepath) {
     FILE * f = fopen(filepath, "w");
     if (f == NULL) {

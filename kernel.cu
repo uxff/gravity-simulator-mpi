@@ -72,7 +72,19 @@ void calcOne(Orb*o, int oId, Orb*olist, int nUnit) {
 	o->vz += gaz;
 	//}
 }
-void initList(Orb *olist, int nUnit, int style) {
+
+Orb* newOrbList(int nUnit, int style) {
+
+	int listSizeOfByte = sizeof(double) * unitSize * nUnit;
+	Orb* list = (Orb*)malloc(listSizeOfByte);
+	initOrbList(list, nUnit, style);
+	return list;
+}
+
+void deleteOrbList(Orb *olist) {
+
+}
+void initOrbList(Orb *olist, int nUnit, int style) {
 	int i = 0;
 	srand(time(NULL));
 	for (i = 0; i<nUnit; ++i) {

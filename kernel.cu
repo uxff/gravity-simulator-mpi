@@ -25,16 +25,22 @@ typedef struct Orb{
 	double vy;
 	double vz;
 	double m;
-	short st;
+	double st;
 }Orb;
 
 #define G 0.000005
 #define MIN_DIST 1.0
 const int unitSize = 8;//unitSize:每个计算单位的大小，多少个float
-double wide = 1000;
+double wide = 10000;
 double mass = 10;
 double velo = 0.005;
 int saveTimes = 0;
+
+void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz);
+void calcOne(Orb*o, int oId, Orb*olist, int nUnit);
+Orb* newOrbList(int nUnit, int style);
+void deleteOrbList(Orb *olist);
+void initOrbList(Orb *olist, int nUnit, int style);
 
 /* calc gravity between two*/
 void calcGravity(Orb*o, Orb*ta, double dist, double*gx, double*gy, double*gz) {
@@ -82,7 +88,9 @@ Orb* newOrbList(int nUnit, int style) {
 }
 
 void deleteOrbList(Orb *olist) {
-
+	if (olist != NULL) {
+		delete(olist);
+	}
 }
 void initOrbList(Orb *olist, int nUnit, int style) {
 	int i = 0;
@@ -127,6 +135,32 @@ int main()
     }
 
     return 0;
+}
+
+cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes) {
+	int* dev_a = 0;
+	int* dev_b = 0;
+	cudaError_t cudaStatus;
+
+	// Choose which GPU to run on, change this on a multi-GPU system.
+	cudaStatus = cudaSetDevice(0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+		goto Error;
+	}
+
+	// Allocate GPU buffers for three vectors (two input, one output)    .
+	cudaStatus = cudaMalloc((void**)&dev_a, nUnit * sizeof(Orb));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMalloc failed!");
+		goto Error;
+	}
+
+Error:
+	cudaFree(dev_a);
+	cudaFree(dev_b);
+
+	return cudaStatus;
 }
 
 // Helper function for using CUDA to add vectors in parallel.

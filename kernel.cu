@@ -23,7 +23,7 @@ typedef struct Orb {
 
 #define G 0.000005
 #define MIN_DIST 1.0
-const int unitSize = 8;//unitSize:每个计算单位的大小，多少个float
+const int unitSize = 8;//unitSize:size of each unit:8 floats
 double wide = 10000;
 double mass = 10;
 double velo = 0.005;
@@ -31,7 +31,7 @@ int saveTimes = 0;
 int calcTimes = 1000;
 
 
-cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes);
+cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes, const char* saveFile);
 
 //__global__ void calcOne(Orb*o, int oId, Orb*olist, int nUnit);
 __global__ void calcOneInDevice(void *polist, int nUnit);
@@ -40,20 +40,25 @@ void deleteOrbList(Orb *olist);
 void initOrbList(Orb *olist, int nUnit, int style);
 void printList(Orb* olist, int nNum);
 void saveList(Orb* olist, int nNum, const char* saveFile);
+#define PRINTLIST(str,o) printf("%s{%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", str, (o)->x, (o)->y, (o)->z, (o)->vx, (o)->vy, (o)->vz, (o)->m, (o)->st)
 
 __global__ void calcOneInDevice(void *polist, int nUnit)
 {
 	int tid = threadIdx.x;
 	//c[i] = a[i] + b[i];
-	//printf("this is thread:%d,%d,%d grid:%d,%d,%d, device:%d, blockIdx:%d,%d,%d\n", threadIdx.x, threadIdx.y, threadIdx.z, gridDim.x, gridDim.y, gridDim.z, blockIdx.x, blockIdx.y, blockDim.z);
+	printf("this is thread:%d,%d,%d grid:%d,%d,%d blockIdx:%d,%d,%d nUnit=%d\n", threadIdx.x, threadIdx.y, threadIdx.z, gridDim.x, gridDim.y, gridDim.z, blockIdx.x, blockIdx.y, blockDim.z, nUnit);
 	Orb* olist = (Orb*)polist;
 	Orb* o = olist + tid;
 	int oId = tid;
 	//if (o->st < 0) {
 	int i = 0, isTooRappid = 0;
 	double gax = 0, gay = 0, gaz = 0, dist = 0;
+	printf("o[%d]={%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", tid, (o)->x, (o)->y, (o)->z, (o)->vx, (o)->vy, (o)->vz, (o)->m, (o)->st);
+	
 	for (i = 0; i<nUnit; ++i) {
 		Orb* ta = olist + i;
+		printf("ta[%d]={%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", tid, (ta)->x, (ta)->y, (ta)->z, (ta)->vx, (ta)->vy, (ta)->vz, (ta)->m, (ta)->st);
+
 		if (o->st < 0 && ta->st < 0 && oId != i) {
 			dist = sqrt(((ta->x - o->x)*(ta->x - o->x) + (ta->y - o->y)*(ta->y - o->y) + (ta->z - o->z)*(ta->z - o->z)));
 			isTooRappid = dist*dist<(o->vx*o->vx + o->vy*o->vy + o->vz*o->vz) * 10;
@@ -133,6 +138,8 @@ const char* getArgStr(const int argc, const char** argv, const char* flag, const
 	return value;
 }
 
+
+
 int main(int argc, const char**argv)
 {
 int nUnit = getArgInt(argc, argv, "-n", 100);
@@ -146,11 +153,13 @@ Orb* olist = newOrbList(nUnit, 1);
 
 printList(olist, nUnit);
 
-cudaStatus = calcOrbsWithCuda(olist, nUnit, nTimes);
+cudaStatus = calcOrbsWithCuda(olist, nUnit, nTimes, saveFile);
 if (cudaStatus != cudaSuccess) {
 	fprintf(stderr, "calcOrbsWithCuda failed!");
 	return 1;
 }
+
+
 
 // cudaDeviceReset must be called before exiting in order for profiling and
 // tracing tools such as Nsight and Visual Profiler to show complete traces.
@@ -173,7 +182,7 @@ scanf("%d", &nUnit);
 return 0;
 }
 
-cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes) {
+cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes, const char* saveFile) {
 	Orb* dev_a = 0;
 	//int* dev_b = 0;
 	cudaError_t cudaStatus;
@@ -195,32 +204,40 @@ cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes) {
 	// Copy output vector from GPU buffer to host memory.
 	cudaStatus = cudaMemcpy(dev_a, (void*)olist, nUnit * sizeof(Orb), cudaMemcpyHostToDevice);
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
+		fprintf(stderr, "cudaMemcpyHostToDevice failed!");
 		goto Error;
 	}
 
-	// do
-	calcOneInDevice << <1, nUnit, nUnit*sizeof(Orb), 0 >> >(dev_a, nUnit);
+	for (int i = 0; i < nTimes; ++i) {
 
-	// Check for any errors launching the kernel
-	cudaStatus = cudaGetLastError();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "calcOneInDevice launch failed: %s\n", cudaGetErrorString(cudaStatus));
-		goto Error;
-	}
+		// do
+		calcOneInDevice << <1, nUnit, nUnit*sizeof(Orb), 0 >> >(dev_a, nUnit);
 
-	// cudaDeviceSynchronize waits for the kernel to finish, and returns
-	// any errors encountered during the launch.
-	cudaStatus = cudaDeviceSynchronize();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-		goto Error;
+		// Check for any errors launching the kernel
+		cudaStatus = cudaGetLastError();
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "calcOneInDevice launch failed: %s\n", cudaGetErrorString(cudaStatus));
+			goto Error;
+		}
+
+		// cudaDeviceSynchronize waits for the kernel to finish, and returns
+		// any errors encountered during the launch.
+		cudaStatus = cudaDeviceSynchronize();
+		if (cudaStatus != cudaSuccess) {
+			fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+			goto Error;
+		}
+
+		if (i*nUnit*nUnit > 10000) {
+			cudaMemcpy((void*)olist, dev_a, nUnit * sizeof(Orb), cudaMemcpyDeviceToHost);
+			saveList(olist, nUnit, saveFile);
+		}
 	}
 
 	// Copy output vector from GPU buffer to host memory.
 	cudaStatus = cudaMemcpy((void*)olist, dev_a, nUnit * sizeof(Orb), cudaMemcpyDeviceToHost);
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
+		fprintf(stderr, "cudaMemcpyDeviceToHost failed!");
 		goto Error;
 	}
 

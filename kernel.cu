@@ -40,24 +40,23 @@ void deleteOrbList(Orb *olist);
 void initOrbList(Orb *olist, int nUnit, int style);
 void printList(Orb* olist, int nNum);
 void saveList(Orb* olist, int nNum, const char* saveFile);
-#define PRINTLIST(str,o) printf("%s{%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", str, (o)->x, (o)->y, (o)->z, (o)->vx, (o)->vy, (o)->vz, (o)->m, (o)->st)
 
 __global__ void calcOneInDevice(void *polist, int nUnit)
 {
 	int tid = threadIdx.x;
 	//c[i] = a[i] + b[i];
-	printf("this is thread:%d,%d,%d grid:%d,%d,%d blockIdx:%d,%d,%d nUnit=%d\n", threadIdx.x, threadIdx.y, threadIdx.z, gridDim.x, gridDim.y, gridDim.z, blockIdx.x, blockIdx.y, blockDim.z, nUnit);
+	//printf("this is thread:%d,%d,%d grid:%d,%d,%d blockIdx:%d,%d,%d nUnit=%d\n", threadIdx.x, threadIdx.y, threadIdx.z, gridDim.x, gridDim.y, gridDim.z, blockIdx.x, blockIdx.y, blockDim.z, nUnit);
 	Orb* olist = (Orb*)polist;
 	Orb* o = olist + tid;
 	int oId = tid;
 	//if (o->st < 0) {
 	int i = 0, isTooRappid = 0;
 	double gax = 0, gay = 0, gaz = 0, dist = 0;
-	printf("o[%d]={%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", tid, (o)->x, (o)->y, (o)->z, (o)->vx, (o)->vy, (o)->vz, (o)->m, (o)->st);
+	//printf("o[%d]={%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", tid, (o)->x, (o)->y, (o)->z, (o)->vx, (o)->vy, (o)->vz, (o)->m, (o)->st);
 	
 	for (i = 0; i<nUnit; ++i) {
 		Orb* ta = olist + i;
-		printf("ta[%d]={%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", tid, (ta)->x, (ta)->y, (ta)->z, (ta)->vx, (ta)->vy, (ta)->vz, (ta)->m, (ta)->st);
+		//printf("ta[%d][%d]={%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf}\n", tid, i, (ta)->x, (ta)->y, (ta)->z, (ta)->vx, (ta)->vy, (ta)->vz, (ta)->m, (ta)->st);
 
 		if (o->st < 0 && ta->st < 0 && oId != i) {
 			dist = sqrt(((ta->x - o->x)*(ta->x - o->x) + (ta->y - o->y)*(ta->y - o->y) + (ta->z - o->z)*(ta->z - o->z)));
@@ -138,15 +137,21 @@ const char* getArgStr(const int argc, const char** argv, const char* flag, const
 	return value;
 }
 
-
+int nUnit = 100;
+int nTimes = 1000;
+int nBlock = 1;
+int nThread = 1;
+const char* saveFile = "thelist1";
 
 int main(int argc, const char**argv)
 {
-int nUnit = getArgInt(argc, argv, "-n", 100);
-int nTimes = getArgInt(argc, argv, "-t", 1000);
-const char* saveFile = getArgStr(argc, argv, "--savefile", "thelist1");
+nUnit = getArgInt(argc, argv, "-n", nUnit);
+nTimes = getArgInt(argc, argv, "-t", nTimes);
+nBlock = getArgInt(argc, argv, "-b", nBlock);
+nThread = getArgInt(argc, argv, "--thread", nThread);
+saveFile = getArgStr(argc, argv, "--savefile", "thelist1");
 
-printf("nUnit=%d, nTimes=%d\n", nUnit, nTimes);
+printf("nUnit=%d, nTimes=%d nBlock=%d nThread=%d savefile=%s\n", nUnit, nTimes, nBlock, nThread, saveFile);
 
 cudaError_t cudaStatus;
 Orb* olist = newOrbList(nUnit, 1);
@@ -211,7 +216,7 @@ cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes, const char* save
 	for (int i = 0; i < nTimes; ++i) {
 
 		// do
-		calcOneInDevice << <1, nUnit, nUnit*sizeof(Orb), 0 >> >(dev_a, nUnit);
+		calcOneInDevice << <nBlock, nThread, nUnit*sizeof(Orb), 0 >> >(dev_a, nUnit);
 
 		// Check for any errors launching the kernel
 		cudaStatus = cudaGetLastError();

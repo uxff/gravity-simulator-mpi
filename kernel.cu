@@ -30,6 +30,12 @@ double velo = 0.005;
 int saveTimes = 0;
 int calcTimes = 1000;
 
+int nUnit = 100;
+int nTimes = 1000;
+int nBlock = 1;
+int nThread = 1;
+const char* saveFile = "thelist1";
+
 
 cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes, const char* saveFile);
 
@@ -43,9 +49,14 @@ void saveList(Orb* olist, int nNum, const char* saveFile);
 
 __global__ void calcOneInDevice(void *polist, int nUnit)
 {
-	int tid = threadIdx.x;
-	//c[i] = a[i] + b[i];
-	//printf("this is thread:%d,%d,%d grid:%d,%d,%d blockIdx:%d,%d,%d nUnit=%d\n", threadIdx.x, threadIdx.y, threadIdx.z, gridDim.x, gridDim.y, gridDim.z, blockIdx.x, blockIdx.y, blockDim.z, nUnit);
+	int tid = threadIdx.x*gridDim.x + blockIdx.x;
+	//threadIdx.x will be 0 to nThread, you should plus as oid manual
+	//printf("this is thread:%d,%d,%d grid:%d,%d,%d blockIdx:%d,%d,%d nUnit=%d tid=%d\n", threadIdx.x, threadIdx.y, threadIdx.z, gridDim.x, gridDim.y, gridDim.z, blockIdx.x, blockIdx.y, blockDim.z, nUnit, tid);
+
+	if (tid >= nUnit) {
+		return;
+	}
+
 	Orb* olist = (Orb*)polist;
 	Orb* o = olist + tid;
 	int oId = tid;
@@ -137,12 +148,6 @@ const char* getArgStr(const int argc, const char** argv, const char* flag, const
 	return value;
 }
 
-int nUnit = 100;
-int nTimes = 1000;
-int nBlock = 1;
-int nThread = 1;
-const char* saveFile = "thelist1";
-
 int main(int argc, const char**argv)
 {
 nUnit = getArgInt(argc, argv, "-n", nUnit);
@@ -216,7 +221,7 @@ cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes, const char* save
 	for (int i = 0; i < nTimes; ++i) {
 
 		// do
-		calcOneInDevice << <nBlock, nThread, nUnit*sizeof(Orb), 0 >> >(dev_a, nUnit);
+		calcOneInDevice << <nBlock, nThread>> >(dev_a, nUnit);
 
 		// Check for any errors launching the kernel
 		cudaStatus = cudaGetLastError();
@@ -227,9 +232,10 @@ cudaError_t calcOrbsWithCuda(Orb* olist, int nUnit, int nTimes, const char* save
 
 		// cudaDeviceSynchronize waits for the kernel to finish, and returns
 		// any errors encountered during the launch.
+		// code 30: you should change or disable WDDM TDR delay in NVIDIA Nsight Monitor, Options
 		cudaStatus = cudaDeviceSynchronize();
 		if (cudaStatus != cudaSuccess) {
-			fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+			fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching calcOneInDevice!\n", cudaStatus);
 			goto Error;
 		}
 
